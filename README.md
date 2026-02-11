@@ -204,7 +204,7 @@ sudo ./00_add_wwn.sh
 
 ```bash
 # wipefs -a /dev/disk/by-id/wwn-id-here
-wipefs -a /dev/disk/by-id/wwn-0x5000c500a7d6d9af
+wipefs -a /dev/disk/by-id/wwn-0xEXAMPLE_ID_1
 ```
 
 **2. Pre-Burn Health Screen**
