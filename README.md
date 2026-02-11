@@ -253,15 +253,15 @@ _Generated via `08_generate_report.sh_`
 
 | Status                                            | WWN / Drive ID           | Location | Notes / Action          |
 | ------------------------------------------------- | ------------------------ | -------- | ----------------------- |
-| <span style="color: #3498db;">**TESTING**</span>  | `wwn-0x5000c500af2e15b3` | Oc1-6    | Pending                 |
-| <span style="color: #3498db;">**TESTING**</span>  | `wwn-0x5000c500a7d70dcb` | Oc1-7    | **BURN-IN RECOMMENDED** |
-| <span style="color: #3498db;">**TESTING**</span>  | `wwn-`                   | Oc1-0    | Pending                 |
+| <span style="color: #3498db;">**TESTING**</span>  | `wwn-0xEXAMPLE_ID_1` | 1-6    | Pending                 |
+| <span style="color: #3498db;">**TESTING**</span>  | `wwn-0xEXAMPLE_ID_2` | 1-7    | **BURN-IN RECOMMENDED** |
+| <span style="color: #3498db;">**TESTING**</span>  | `wwn-0xEXAMPLE_ID_3`                   | Oc1-0    | Pending                 |
 |                                                   |                          |          |                         |
-| <span style="color: #2ecc71;">**KEEP**</span>     | `wwn-0x5000c500a6be884f` | Oc1-2    | **Tier A (Healthy)**    |
-| <span style="color: #f1c40f;">**MARGINAL**</span> | `wwn-0x5000c500a7d70ebf` | Oc2-7    | Tier B (Watch closely)  |
+| <span style="color: #2ecc71;">**KEEP**</span>     | `wwn-0xEXAMPLE_ID_4` | 1-2    | **Tier A (Healthy)**    |
+| <span style="color: #f1c40f;">**MARGINAL**</span> | `wwn-0xEXAMPLE_ID_5` | 2-7    | Tier B (Watch closely)  |
 |                                                   |                          |          |                         |
-| <span style="color: #e74c3c;">**REMOVE**</span>   | `wwn-0x5000c50094ecc9d7` | Oc1-3    | Pull from array         |
-| <span style="color: #e74c3c;">**REMOVE**</span>   | `wwn-0x5000c500a7d6d9af` | Oc2-6    | **HIGH DEFECT COUNT**   |
+| <span style="color: #e74c3c;">**REMOVE**</span>   | `wwn-0xEXAMPLE_ID_6` | 1-3    | Pull from array         |
+| <span style="color: #e74c3c;">**REMOVE**</span>   | `wwn-0xEXAMPLE_ID_7` | 2-6    | **HIGH DEFECT COUNT**   |
 
 ---
 
