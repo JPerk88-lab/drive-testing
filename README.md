@@ -12,37 +12,87 @@ Imagine you just bought a used car. Before you put your family in it and drive a
 
 ---
 
-### 🚦 How to use it (The Simple Version)
+### 📋 Prerequisites & Setup
 
-#### 1. The "Name Tag" Phase (`00_add_wwn.sh`)
+Before running the scripts, your server needs a few tools installed.
 
-Before we start, we need to know which drive is which. This script finds every drive and asks you where it is sitting in your computer (e.g., "Top Left Slot"). This way, if a drive fails, you know exactly which one to pull out.
+#### 1. System Packages
 
-#### 2. The "Physical Map" (`drive_slots.conf`)
+You will need `smartmontools` (to talk to the drives) and `bc` (for the math in the dashboard).
 
-This is just a notebook where the computer stores the "Name Tags" you created in Step 1.
+```bash
+sudo apt update
+sudo apt install smartmontools bc storcli64
 
-#### 3. The "Stress Test" (`01_drive_tester_wrapper_auto.sh`)
+```
 
-This is the main button. When you press it:
+_Note: If you are using an LSI/Broadcom HBA, ensure `storcli64` is located at `/usr/local/bin/storcli64` for the temperature logger to work._
 
-* **Safety Check:** It checks if you have any important files on the drives. If you do, it **stops** and won't touch them.
-* **The Workout:** It writes data to every single "room" on the hard drive and then reads it back to make sure nothing changed.
-* **The Thermostat:** If the drives get too hot (like a phone sitting in the sun), the script **pauses** the work automatically to let them cool down, then starts again when it's safe.
+#### 2. Python Environment (For Graphs)
 
-#### 4. The "Report Card" (`07_score_drives_...`)
+The suite uses Python to create pretty charts of your drive temperatures. We use a "Virtual Environment" (venv) so we don't mess up your system's Python.
 
-Once the test is over, the script gives each drive a grade:
+```bash
+# Install python venv support
+sudo apt install python3-venv
 
-* **Grade A:** Perfect. Use this for your most important files.
-* **Grade B/C:** It has some "scratches" (old age or minor errors). Maybe use it for things you have copies of elsewhere.
-* **Grade D (Reject):** The drive is broken or about to break. Put it in the trash!
+# Create and activate the environment
+python3 -m venv ~/burnin_env
+source ~/burnin_env/bin-activate
+
+# Install the graphing tools
+pip install pandas matplotlib
+
+```
 
 ---
 
-### 📈 Why we do this
+### 🚦 How to use it
 
-Hard drives are like lightbulbs; they usually break either in the first few days of use or after many years. By running these scripts, we force those "early breaks" to happen **now** while the drives are empty, rather than **later** when they are holding your memories.
+#### 1. The "Name Tag" Phase (`00_add_wwn.sh`)
+
+Run this first. It finds every drive and asks you where it is sitting physically (e.g., "Slot 0"). This saves the info to `drive_slots.conf`. If a drive fails later, you'll know exactly which one to pull.
+
+#### 2. The "Stress Test" (`01_drive_tester_wrapper_auto.sh`)
+
+This is the main "Start" button.
+
+- **Safety:** It refuses to touch any drive already used by ZFS.
+- **Thermal Protection:** If the drives or the HBA (controller) get too hot, the script **pauses** automatically and waits for them to cool down.
+- **Logging:** It records every temperature spike and every data error to a CSV file.
+
+#### 3. Real-Time Monitoring (`burn-watch`)
+
+While the test is running (which can take days!), you can see a live dashboard by adding the helper functions in your `.zshrc` or `.bashrc`. It shows:
+
+- **Current Temperature:** (Green = Good, Red = Hot!)
+- **Progress:** Exactly how many GB are left to test.
+- **ETA:** A countdown until the test is finished.
+
+#### 4. The Report Card (`08_generate_report.sh`)
+
+When finished, run the report script. It will:
+
+1. **Calculate Scores:** Grades your drives A through D.
+2. **Plot Graphs:** Uses Python to create `thermal_profile.png`, showing you if your fans were doing their job.
+3. **Markdown Report:** Generates a summary you can paste into notes (like BookStack).
+
+---
+
+### 🌡️ Why Thermal Monitoring Matters
+
+Hard drives are sensitive. Running a 48-hour stress test generates a lot of heat.
+
+- **The HBA:** Your disk controller can overheat before the drives do. Our `04_hba_temp_logger.sh` watches this.
+- **The Pause/Resume:** If a drive hits 55°C, the script sends a "Stop" signal to the test. Once the fans cool it back to 48°C, it "Resumes" exactly where it left off.
+
+---
+
+### 🛠️ Troubleshooting
+
+- **"Permission Denied":** Most of these scripts need `sudo` because they talk directly to hardware.
+- **"storcli64 not found":** If you don't have an LSI HBA, the HBA temperature logger will fail gracefully, but you should comment out that line in the wrapper.
+- **Python Errors:** Make sure you have activated your environment: `source ~/burnin_env/bin/activate`.
 
 ---
 
@@ -59,42 +109,41 @@ Hard drives are like lightbulbs; they usually break either in the first few days
 
 ### 🛠️ Phase 0: Intake & Preparation
 
-| Script | Description |
-| --- | --- |
-| **`00_add_wwn.sh`** | **The Gatekeeper.** Identifies new drives, maps them to physical Slot IDs in `drive_slots.conf`, and generates `wipefs` cleanup commands. |
-| **`check_badblocks.sh`** | **The Engine.** The core logic used by `burn-status` and `burn-watch` to parse logs, calculate percentage, and report drive temperature. |
+| Script                   | Description                                                                                                                               |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| **`00_add_wwn.sh`**      | **The Gatekeeper.** Identifies new drives, maps them to physical Slot IDs in `drive_slots.conf`, and generates `wipefs` cleanup commands. |
+| **`check_badblocks.sh`** | **The Engine.** The core logic used by `burn-status` and `burn-watch` to parse logs, calculate percentage, and report drive temperature.  |
 
 ### 🚀 Phase 1-5: The Testing Pipeline
 
-| Script | Description |
-| --- | --- |
+| Script                           | Description                                                                                                                        |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | **`01_drive_tester_wrapper.sh`** | **The Orchestrator.** The main entry point. Runs the full battery of tests (Baseline, SMART, Badblocks) across all defined drives. |
-| **`02_preburn_screen.sh`** | **The Filter.** Performs initial SMART health checks to catch "Dead on Arrival" drives before starting long-running tests. |
-| **`03_drive_burnin.sh`** | **The Stressor.** Executes the heavy-lifting `badblocks` destructive write/read patterns to stress the platters and heads. |
+| **`02_preburn_screen.sh`**       | **The Filter.** Performs initial SMART health checks to catch "Dead on Arrival" drives before starting long-running tests.         |
+| **`03_drive_burnin.sh`**         | **The Stressor.** Executes the heavy-lifting `badblocks` destructive write/read patterns to stress the platters and heads.         |
 
 ### 🌡️ Monitoring & Logging
 
-| Script | Description |
-| --- | --- |
+| Script                        | Description                                                                                                                        |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | **`04_drive_temp_logger.sh`** | **HDD Monitor.** Periodically polls and logs drive temperatures to ensure they stay within safe thermal limits during the burn-in. |
-| **`04_hba_temp_logger.sh`** | **Controller Monitor.** Logs the temperature of your SAS HBA/RAID card to prevent controller throttling or overheating. |
+| **`04_hba_temp_logger.sh`**   | **Controller Monitor.** Logs the temperature of your SAS HBA/RAID card to prevent controller throttling or overheating.            |
 
 ### 📊 Phase 6: Analysis & Reporting
 
-| Script | Description |
-| --- | --- |
-| **`06_summarize_burnin.sh`** | **The Aggregator.** Collects all raw logs into a single summary file for post-test review. |
-| **`07_score_drives.sh`** | **The Judge.** Compares Pre- and Post-burn SMART data to find "hidden" hardware degradation. |
+| Script                           | Description                                                                                                          |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| **`06_summarize_burnin.sh`**     | **The Aggregator.** Collects all raw logs into a single summary file for post-test review.                           |
+| **`07_score_drives.sh`**         | **The Judge.** Compares Pre- and Post-burn SMART data to find "hidden" hardware degradation.                         |
 | **`07_score_drives_homelab.sh`** | **Homelab Filter.** A version of the scoring script with slightly more relaxed criteria for used/refurbished drives. |
-| **`07_score_drives_zfs.sh`** | **The ZFS Finalist.** High-stringency scoring specifically for drives intended for mission-critical ZFS VDEVs. |
-| **`08_generate_report.sh`** | **The Publisher.** Converts final results into a clean Markdown table ready for copy-pasting into BookStack. |
+| **`07_score_drives_zfs.sh`**     | **The ZFS Finalist.** High-stringency scoring specifically for drives intended for mission-critical ZFS VDEVs.       |
+| **`08_generate_report.sh`**      | **The Publisher.** Converts final results into a clean Markdown table ready for copy-pasting into BookStack.         |
 
 ---
 
 > **Future Note:** If you find yourself frequently using the ZFS scoring script over the others, you can create a symlink named `final-score` pointing to `07_score_drives_zfs.sh` to save yourself some typing!
 
 ---
-
 
 ### 🗺️ Operational Workflow (Diff Style)
 
@@ -150,6 +199,7 @@ ls -l /dev/disk/by-id | grep wwn | grep -vE "part|sda"
 sudo ./00_add_wwn.sh
 
 ```
+
 **Wipe Drive (SKIP - automatic discovery now)**
 
 ```bash
@@ -199,27 +249,27 @@ tail -f ~/logs/drive_burnin_$(date +%F)*/debug/burnin.log
 
 ## 📊 Drive Status Summary
 
-*Generated via `08_generate_report.sh*`
+_Generated via `08_generate_report.sh_`
 
-| Status | WWN / Drive ID | Location | Notes / Action |
-| --- | --- | --- | --- |
-| <span style="color: #3498db;">**TESTING**</span> | `wwn-0x5000c500af2e15b3` | Oc1-6 | Pending |
-| <span style="color: #3498db;">**TESTING**</span> | `wwn-0x5000c500a7d70dcb` | Oc1-7 | **BURN-IN RECOMMENDED** |
-| <span style="color: #3498db;">**TESTING**</span> | `wwn-` | Oc1-0 | Pending |
-|  |  |  |  |
-| <span style="color: #2ecc71;">**KEEP**</span> | `wwn-0x5000c500a6be884f` | Oc1-2 | **Tier A (Healthy)** |
-| <span style="color: #f1c40f;">**MARGINAL**</span> | `wwn-0x5000c500a7d70ebf` | Oc2-7 | Tier B (Watch closely) |
-|  |  |  |  |
-| <span style="color: #e74c3c;">**REMOVE**</span> | `wwn-0x5000c50094ecc9d7` | Oc1-3 | Pull from array |
-| <span style="color: #e74c3c;">**REMOVE**</span> | `wwn-0x5000c500a7d6d9af` | Oc2-6 | **HIGH DEFECT COUNT** |
+| Status                                            | WWN / Drive ID           | Location | Notes / Action          |
+| ------------------------------------------------- | ------------------------ | -------- | ----------------------- |
+| <span style="color: #3498db;">**TESTING**</span>  | `wwn-0x5000c500af2e15b3` | Oc1-6    | Pending                 |
+| <span style="color: #3498db;">**TESTING**</span>  | `wwn-0x5000c500a7d70dcb` | Oc1-7    | **BURN-IN RECOMMENDED** |
+| <span style="color: #3498db;">**TESTING**</span>  | `wwn-`                   | Oc1-0    | Pending                 |
+|                                                   |                          |          |                         |
+| <span style="color: #2ecc71;">**KEEP**</span>     | `wwn-0x5000c500a6be884f` | Oc1-2    | **Tier A (Healthy)**    |
+| <span style="color: #f1c40f;">**MARGINAL**</span> | `wwn-0x5000c500a7d70ebf` | Oc2-7    | Tier B (Watch closely)  |
+|                                                   |                          |          |                         |
+| <span style="color: #e74c3c;">**REMOVE**</span>   | `wwn-0x5000c50094ecc9d7` | Oc1-3    | Pull from array         |
+| <span style="color: #e74c3c;">**REMOVE**</span>   | `wwn-0x5000c500a7d6d9af` | Oc2-6    | **HIGH DEFECT COUNT**   |
 
 ---
 
 ## 🧠 Logic & Tiering Criteria
 
-* **Testing Group:** Active work-in-progress. Verify Slot Mapping in `drive_slots.conf` before Phase 4.
-* **Marginal (Tier B):** Drives that passed `badblocks` but show non-zero `Reallocated_Sector_Ct` or high `Seek_Error_Rate`. Use for non-critical datasets.
-* **Remove:** Non-negotiable failure. Any `badblocks` error or `Current_Pending_Sector` count > 0 post-burn.
+- **Testing Group:** Active work-in-progress. Verify Slot Mapping in `drive_slots.conf` before Phase 4.
+- **Marginal (Tier B):** Drives that passed `badblocks` but show non-zero `Reallocated_Sector_Ct` or high `Seek_Error_Rate`. Use for non-critical datasets.
+- **Remove:** Non-negotiable failure. Any `badblocks` error or `Current_Pending_Sector` count > 0 post-burn.
 
 ---
 
@@ -229,18 +279,18 @@ tail -f ~/logs/drive_burnin_$(date +%F)*/debug/burnin.log
 
 The `burn-watch` alias uses `check_badblocks.sh` to clean the terminal output, removing backspace noise and adding color-coding:
 
-* **Green:** Healthy / Progressing.
-* **Yellow:** Temperature Warning ().
-* **Red:** Errors detected in `(0/0/0)` triplet or high heat ().
+- **Green:** Healthy / Progressing.
+- **Yellow:** Temperature Warning ().
+- **Red:** Errors detected in `(0/0/0)` triplet or high heat ().
 
 ### 2. Decision Tree
 
-| Observation | Immediate Action | Classification |
-| --- | --- | --- |
-| **Percentage is increasing** | None. Let it cook. | **TESTING** |
-| **(0/0/1+) Corruption** | Stop; Check SAS Cables/Backplane. | **CHECK CABLES** |
-| **Percentage frozen > 1hr** | Check `dmesg` for SATA link resets. | **TIMEOUT / FAIL** |
-| **Test Interrupted** | Verify power/reboot; resume test. | **RE-TEST** |
+| Observation                  | Immediate Action                    | Classification     |
+| ---------------------------- | ----------------------------------- | ------------------ |
+| **Percentage is increasing** | None. Let it cook.                  | **TESTING**        |
+| **(0/0/1+) Corruption**      | Stop; Check SAS Cables/Backplane.   | **CHECK CABLES**   |
+| **Percentage frozen > 1hr**  | Check `dmesg` for SATA link resets. | **TIMEOUT / FAIL** |
+| **Test Interrupted**         | Verify power/reboot; resume test.   | **RE-TEST**        |
 
 ---
 
@@ -250,9 +300,9 @@ The `burn-watch` alias uses `check_badblocks.sh` to clean the terminal output, r
 
 When you run your `burn-watch` alias now, the visual feedback will look like this:
 
-* **Green:** Drive is humming along perfectly.
-* **Yellow:** Drive is starting up or has no data yet.
-* **Red:** **Action Required.** An error has been logged or the test was killed.
+- **Green:** Drive is humming along perfectly.
+- **Yellow:** Drive is starting up or has no data yet.
+- **Red:** **Action Required.** An error has been logged or the test was killed.
 
 ---
 
@@ -260,25 +310,23 @@ When you run your `burn-watch` alias now, the visual feedback will look like thi
 
 Add this table to your BookStack page to help you interpret the "Red" errors when they appear.
 
-| Script Output | SMART Attribute | Likely Hardware Culprit |
-| --- | --- | --- |
-| **(1/0/0)** | `197 Current_Pending_Sector` | Platter defect / Weak head. |
-| **(0/1/0)** | `196 Reallocated_Event_Count` | Disk firmware failed to map out a bad spot. |
-| **(0/0/1)** | `199 UDMA_CRC_Error_Count` | **SATA/SAS Cable.** High chance of a bad connection. |
-| **Interrupted** | `12 Power_Cycle_Count` | Power supply issue or loose molex/sata power. |
+| Script Output   | SMART Attribute               | Likely Hardware Culprit                              |
+| --------------- | ----------------------------- | ---------------------------------------------------- |
+| **(1/0/0)**     | `197 Current_Pending_Sector`  | Platter defect / Weak head.                          |
+| **(0/1/0)**     | `196 Reallocated_Event_Count` | Disk firmware failed to map out a bad spot.          |
+| **(0/0/1)**     | `199 UDMA_CRC_Error_Count`    | **SATA/SAS Cable.** High chance of a bad connection. |
+| **Interrupted** | `12 Power_Cycle_Count`        | Power supply issue or loose molex/sata power.        |
 
 ---
-
-
 
 ### 3. Your Final BookStack "Management" Setup
 
 Three main tools that all talk to each other:
 
-| Script | Purpose | When to run |
-| --- | --- | --- |
-| `00_add_wwn.sh` | **The Intake:** Assigns physical locations to new hardware. | When plugging in new drives. |
-| `check_badblocks.sh` | **The Monitor:** Shows live progress/temp with Slot IDs. | While tests are running. |
+| Script                  | Purpose                                                     | When to run                     |
+| ----------------------- | ----------------------------------------------------------- | ------------------------------- |
+| `00_add_wwn.sh`         | **The Intake:** Assigns physical locations to new hardware. | When plugging in new drives.    |
+| `check_badblocks.sh`    | **The Monitor:** Shows live progress/temp with Slot IDs.    | While tests are running.        |
 | `08_generate_report.sh` | **The Reporter:** Spits out a Markdown table for BookStack. | When a batch of tests finishes. |
 
 ---
@@ -299,7 +347,7 @@ You can paste this directly into your BookStack "Drive Validation SOP" page.
 
 ## 🏁 Final Drive Acceptance Checklist
 
-*Post-Phase 4 Verification*
+_Post-Phase 4 Verification_
 
 ### 1. The Health Delta Check
 
@@ -310,19 +358,19 @@ sudo smartctl -A /dev/disk/by-id/wwn-YOUR_ID
 
 ```
 
-| Attribute | Threshold for Failure | Reason |
-| --- | --- | --- |
-| **ID 5: Reallocated_Sector_Ct** | **> 0** | The drive is physically wearing out. |
-| **ID 197: Current_Pending_Sector** | **> 0** | Unstable sectors waiting to be remapped. |
-| **ID 199: UDMA_CRC_Error_Count** | **Increasing** | Bad SATA/SAS cable or backplane port. |
+| Attribute                          | Threshold for Failure | Reason                                   |
+| ---------------------------------- | --------------------- | ---------------------------------------- |
+| **ID 5: Reallocated_Sector_Ct**    | **> 0**               | The drive is physically wearing out.     |
+| **ID 197: Current_Pending_Sector** | **> 0**               | Unstable sectors waiting to be remapped. |
+| **ID 199: UDMA_CRC_Error_Count**   | **Increasing**        | Bad SATA/SAS cable or backplane port.    |
 
 ### 2. Physical Labeling
 
 Once the drive passes the SMART delta check:
 
-* [ ] Print/Write a label with the **Last 4 of the WWN**.
-* [ ] Mark the **Date of Completion**.
-* [ ] Affix label to the **Drive Tray handle**.
+- [ ] Print/Write a label with the **Last 4 of the WWN**.
+- [ ] Mark the **Date of Completion**.
+- [ ] Affix label to the **Drive Tray handle**.
 
 ### 3. ZFS Integration
 
@@ -336,12 +384,12 @@ zpool add <pool_name> /dev/disk/by-id/wwn-YOUR_ID
 
 ## 🗂️ Script Inventory & Source of Truth
 
-| Script | Purpose | When to run |
-| --- | --- | --- |
-| `00_add_wwn.sh` | Updates `drive_slots.conf` | On drive intake. |
-| `check_badblocks.sh` | Logic for `burn-watch` dashboard | During active testing. |
-| `08_generate_report.sh` | Formats Markdown for BookStack | After batch completion. |
-| `drive_slots.conf` | **Source of Truth** for Slot IDs | Update via `00_add_wwn.sh`. |
+| Script                  | Purpose                          | When to run                 |
+| ----------------------- | -------------------------------- | --------------------------- |
+| `00_add_wwn.sh`         | Updates `drive_slots.conf`       | On drive intake.            |
+| `check_badblocks.sh`    | Logic for `burn-watch` dashboard | During active testing.      |
+| `08_generate_report.sh` | Formats Markdown for BookStack   | After batch completion.     |
+| `drive_slots.conf`      | **Source of Truth** for Slot IDs | Update via `00_add_wwn.sh`. |
 
 ---
 
@@ -363,7 +411,7 @@ function burn-status() {
     local days_ago=${1:-0}
     local target_date=$(date -d "$days_ago days ago" +%F)
     local base_dir="/root/logs"
-    
+
     local count_healthy=0
     local count_warn=0
     local total_drives=0
@@ -381,14 +429,14 @@ function burn-status() {
         while IFS= read -r f; do
             [[ -z "$f" ]] && continue
             ((total_drives++))
-            
+
             local last_mod=$(stat -c %Y "$f")
             local age=$(($(date +%s) - last_mod))
             local age_color="\033[0;90m"
-            
+
             # Extract progress to see if 100%
             local progress=$(tr -d '\r' < "$f" | grep -oE "[0-9.]+% done" | tail -n 1)
-            
+
             if [[ "$progress" == "100.00% done" ]]; then
                 echo -e "\033[0;32mFile: $(basename "$f") \033[1;30m[COMPLETED]\033[0m"
                 ((count_healthy++))
@@ -397,7 +445,7 @@ function burn-status() {
                 local clean_tail=$(tail -n 15 "$f" | sed 's/\r//g; s/[^[:print:]\t]//g')
                 local current_pat=$(echo "$clean_tail" | grep "pattern" | tail -n 1 | grep -oE "0x[0-9a-fA-F]+" | head -n 1)
                 [[ -z "$current_pat" ]] && current_pat="0x00"
-                
+
                 echo -e "\033[0;32mFile: $(basename "$f") \033[1;35m[Pat: $current_pat]\033[0m ${age_color}(Log: ${age}s)\033[0m"
                 timeout 3s bash "/root/scripts/drive-testing/disk_burnin/check_badblocks.sh" "$f"
                 [[ $age -gt $stale_threshold ]] && ((count_warn++)) || ((count_healthy++))
@@ -409,7 +457,7 @@ function burn-status() {
     # --- PHASE 05: READ (dd) ---
     echo -e "\n\033[1;33m[PHASE 05: PARALLEL READ VERIFY (dd)]\033[0m"
     local dd_logs=$(find "$base_dir" -maxdepth 2 -type f -path "*drive_burnin_${target_date}*/*dd_read_*.log" 2>/dev/null | sort)
-    
+
     if [[ -z "$dd_logs" ]]; then
         echo -e " \033[0;90mPhase 05 has not started yet.\033[0m"
     else
@@ -418,14 +466,14 @@ function burn-status() {
             local wwn=$(basename "$f" | sed 's/dd_read_//;s/.log//')
             local dev_name=$(ls -l /dev/disk/by-id/"$wwn" 2>/dev/null | awk '{print $NF}' | sed 's/..\/..\///')
             local last_line=$(tail -n 1 "$f")
-            
+
             # Live Pulse for DD
             local pulse="IDLE"
             if [[ -n "$dev_name" ]]; then
                 local s1=$(grep " $dev_name " /proc/diskstats | awk '{print $6}')
                 sleep 0.1
                 local s2=$(grep " $dev_name " /proc/diskstats | awk '{print $6}')
-                local diff=$(( (s2 - s1) * 512 / 1048576 )) 
+                local diff=$(( (s2 - s1) * 512 / 1048576 ))
                 [[ $diff -gt 0 ]] && pulse="${diff}MB/s" || pulse="WAITING"
             fi
 
@@ -435,11 +483,11 @@ function burn-status() {
             echo -e "\033[0;90m-------------------------------------------------------\033[0m"
         done <<< "$dd_logs"
     fi
-    
+
     # --- SUMMARY ---
     echo -e "\n\033[1;37m=======================================================\033[0m"
     echo -e "📈 SUMMARY: $total_drives Drives | Healthy: $count_healthy | Stale: $count_warn"
-    
+
     local errors=$(dmesg | grep -Ei "sd[a-z]|ata[0-9]|scsi|sector" | grep -Ei "exception|error|failed|status: { DRDY ERR }" | tail -n 3)
     [[ -n "$errors" ]] && echo -e "Alerts: \033[1;31mHARDWARE ERRORS DETECTED\033[0m" || echo -e "Alerts: \033[0;32mNone (Hardware Clean)\033[0m"
     echo -e "\033[1;37m=======================================================\033[0m\n"
@@ -450,7 +498,7 @@ function burn-status() {
 #############################################################################
 function burn-watch() {
     local days_ago=${1:-0}
-    
+
     # Check if bc is installed for calculations
     if ! command -v bc &> /dev/null; then
         echo "Error: 'bc' is not installed. Install with: apt install bc"
@@ -460,16 +508,16 @@ function burn-watch() {
     while true; do
         # Use clear to keep the dashboard static in the terminal
         clear
-        
+
         # Call the status function we just optimized
         # It now handles the timeouts and speed checks internally
         burn-status "$days_ago"
-        
+
         echo -e "\033[1;30mRefreshing in 30s... Press Ctrl+C to stop.\033[0m"
-        
+
         # Last Update timestamp helps you know if the loop itself hung
         echo -e "\033[1;30mLast Loop Refresh: $(date '+%H:%M:%S')\033[0m"
-        
+
         sleep 30
     done
 }
@@ -485,7 +533,7 @@ burn-time() {
     local NC=$'\e[0m' # No Color
 
     local target_gb=${1:-4000}
-    
+
     echo "${YEL}=======================================================${NC}"
     echo "🔍 ${YEL}DRIVE BURN-IN MONITOR:${NC} $(date +'%Y-%m-%d %H:%M')"
     echo "📊 ${YEL}Target Capacity:${NC} ${target_gb}GB"
@@ -494,18 +542,18 @@ burn-time() {
     for f in /root/logs/drive_burnin_*/dd_read_wwn-*.log(N); do
         local wwn=${${f:t}#dd_read_}
         wwn=${wwn%.log}
-        
+
         local dev=$(readlink -f /dev/disk/by-id/$wwn)
         if [[ -e $dev ]]; then
             local actual_sz=$(blockdev --getsize64 $dev | awk '{print $1/1073741824}')
             local raw_line=$(tail -1 "$f")
-            
+
             # Header
             echo "Drive: ${YEL}${wwn}${NC}"
-            
+
             # Raw Line
             echo " ├─ ${CYA}Activity:${NC} $raw_line"
-            
+
             # Formatted Progress Line
             echo "$raw_line" | tr -d '(),' | awk -v sz="$actual_sz" -v gre="$GRE" -v cya="$CYA" -v nc="$NC" '{
                 d=0; s=0;
@@ -517,7 +565,7 @@ burn-time() {
                     pct=(d/sz)*100;
                     rem=((sz-d)*1024)/s/3600;
                     # Speed in Cyan, Progress/ETA in Green
-                    printf " └─ %sProgress: %6.2f%% %s| %sSpeed: %s MB/s %s| %sETA: %.2f Hours%s\n", 
+                    printf " └─ %sProgress: %6.2f%% %s| %sSpeed: %s MB/s %s| %sETA: %.2f Hours%s\n",
                         gre, pct, nc, cya, s, nc, gre, rem, nc;
                 }
             }'
@@ -527,4 +575,3 @@ burn-time() {
 }
 
 ```
-
